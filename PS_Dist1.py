@@ -21,11 +21,10 @@ lr = 0.01
 cluster = None
 server = None
 is_chief = False
-n_iterations = 1000
 
 def main(_):
 
-	# Creates an Dataset for MNIST Data.
+	# Creates Dataset for MNIST Data.
 
 	(train_images, train_labels),(test_images, test_labels) = tf.keras.datasets.mnist.load_data()
 	
@@ -35,13 +34,6 @@ def main(_):
 	train_images = train_images[:1000].reshape(-1,28*28) / 255.0
 	test_images  = test_images[:1000].reshape(-1,28*28) / 255.0
 	
-	print(" --------------Dataset-------------------- ")
-
-	print(train_images, train_labels)
-	print(test_images, test_labels)
-	
-
-	print(" --------------End Dataset -------------------- ")
 
 	ps_spec = FLAGS.ps_hosts.split(",")
 	worker_spec = FLAGS.worker_hosts.split(",")
@@ -66,7 +58,7 @@ def main(_):
 	server = tf.train.Server(cluster, job_name=FLAGS.job_name, task_index=FLAGS.task_index)
 	
 
-	# ------------ Between-graph replication model -----------------------
+	# ------------ Between-graph replicas -----------------------
 
 	if FLAGS.job_name =='ps':
 		server.join()
@@ -82,19 +74,22 @@ def main(_):
 			y_ = tf.placeholder(dtype=tf.float32, shape=[None, 10], name="y-input")
 
 			# from input to first hidden layer
+
 			w1 = tf.Variable(tf.truncated_normal(shape=[784, 128],stddev=1.0/ math.sqrt(float(784)),dtype=tf.float32),name='w1')
 			b1 = tf.Variable(tf.zeros([128]),name='b1')
 			hid_1 = tf.add(tf.matmul(x_,w1),b1)
 			Act_1 = tf.sigmoid(hid_1)
-			print(" w1 --------------------------------------- ")
+
 			# from first hidden layer to second
+
 			w2 = tf.Variable(tf.truncated_normal(shape=[128, 64],stddev=1.0/ math.sqrt(float(128)),dtype=tf.float32),name='w2')
 			b2 = tf.Variable(tf.zeros([64]),name='b2')
 			hid_2 = tf.add(tf.matmul(Act_1,w2),b2)
 			Act_2 = tf.sigmoid(hid_2)
-			print(" w2 --------------------------------------- ")
+
 
 			# from second to output
+
 			w3 = tf.Variable(tf.truncated_normal(shape=[64,10],stddev=1.0/ math.sqrt(float(64)),dtype=tf.float32),name='w3')
 			b3 = tf.Variable(tf.zeros([10]),name='b3')
 			
@@ -104,21 +99,18 @@ def main(_):
 			
 			loss = tf.losses.softmax_cross_entropy(y_,logits)
 
-			print(" w3 --------------------------------------- ")
 
 			# define optimization
+
 			global_step = tf.train.get_or_create_global_step()
 			optimizer = tf.train.GradientDescentOptimizer(lr)
 			training_op = optimizer.minimize(loss, global_step=global_step)
 
-			print(" y --------------------------------------- ")
-			
 			# use accuracy for evaluation
-    		
-    		#predictions = tf.nn.softmax(logits, axis=1)
-    		#eval_metric_ops ={
-    		#	'accuracy': tf.metrics.accuracy(labels, predictions, name='accuracy')
-    		#}
+			#predictions = tf.nn.softmax(logits, axis=1)
+			#eval_metric_ops ={
+			#'accuracy': tf.metrics.accuracy(labels, predictions, name='accuracy')
+			#}
 
 			if FLAGS.sync_replicas:
 				replicas_to_aggregate = len(worker_spec)
@@ -130,12 +122,10 @@ def main(_):
 			#y_hat = tf.cast(y_hat, tf.uint8)
 			#y_hat = tf.reshape(y_hat, [-1, 1])
 
-			print(" w1 -------------optimizer----------------- ")
-
 			sync_replicas_hook = optimizer.make_session_run_hook(FLAGS.task_index == 0)
 			hooks=[tf.train.StopAtStepHook(last_step=1000000)]
 
-			#---------------training session--------------
+			#---------------Monitoring Training Session--------------
 
 			with tf.train.MonitoredTrainingSession(master=server.target, is_chief=(FLAGS.task_index == 0), 
 				checkpoint_dir="/tmp/train_logs", hooks=hooks) as mon_sess:
