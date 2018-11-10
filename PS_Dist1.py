@@ -10,7 +10,7 @@ from timeit import default_timer as timer
 from tensorflow.examples.tutorials.mnist import input_data
 
 FLAGS = None
-batch_size = 500
+batch_size = 100
 
 
 def main(_):
@@ -31,6 +31,10 @@ def main(_):
 
   # Create and start a server for the local task.
   server = tf.train.Server(cluster,job_name=FLAGS.job_name,task_index=FLAGS.task_index)
+
+  #train, test = tf.keras.datasets.mnist.load_data()
+  #mnist_x, mnist_y = train
+  #mnist_ds = tf.data.Dataset.from_tensor_slices(mnist_x)
   
   #print("\n\n ---------------SERVER DEF------------- \n")
   #print("{}".format(server.server_def))
@@ -56,6 +60,7 @@ def main(_):
       with tf.name_scope('input'):
         X = tf.placeholder(dtype=tf.float32,shape=[None, 784])
         Y = tf.placeholder(dtype=tf.float32,shape=[None, 10])
+        keep_prob = tf.placeholder(tf.float32, name = 'keep_prob')
 
       with tf.name_scope("weights"):
         W1 = tf.Variable(tf.random_normal([784, 256]))
@@ -91,58 +96,55 @@ def main(_):
         elapse = begin_again - begin
         print("elapse", elapse)
         train_op = syn.minimize(loss, global_step=global_step)
-        sync_replicas_hook = syn.make_session_run_hook(is_chief)
-
         with tf.name_scope("accuracy"):
             correct_prediction = tf.equal(tf.argmax(out,1),tf.argmax(Y,1))
             accuracy = tf.reduce_mean(tf.cast(correct_prediction,tf.float32))
 
 
-  stop_hook= tf.train.StopAtStepHook(last_step=10000)
-  
+  tf.local_variables_initializer()
+  tf.global_variables_initializer()
+
+  sync_replicas_hook = syn.make_session_run_hook(is_chief)
+  stop_hook= tf.train.StopAtStepHook(last_step=1000000)
+  hooks = [sync_replicas_hook,stop_hook]
+
+    #tensorboar
+    #writer = tf.summary.FileWriter(tboard_summaries)
+    #saver = tf.train.Saver()
+
   print(" Start Training .... ")
 
-  with tf.train.MonitoredTrainingSession( master=server.target, is_chief=is_chief, hooks=[sync_replicas_hook]) as mon_sess:
 
+
+  with tf.train.MonitoredTrainingSession( master=server.target, is_chief=is_chief, hooks=hooks) as mon_sess:
     step = 0
     i = 0
-    Average_Computation_Time = 0
-    try:
+    End = 0
+    total_images = 0
+    total_time = 0
+    stepsum = 0
+    while not mon_sess.should_stop():
+      Begin = timer()
+      batch_xs, batch_ys = mnist.train.next_batch(batch_size)
+      #mnist_ds.batch(batch_size)
+      total_images += batch_size
+      _, global_step_value = mon_sess.run([train_op, global_step],feed_dict={X: batch_xs, Y: batch_ys})
+      i= i + 1
+      
+      step = step + 1
+      start2 = timer()
+      oncetime = (start2 - Begin)
+      End = End + (start2 - Begin)
+      total_time = total_time + oncetime
 
-      while not mon_sess.should_stop():
-
-        batch_xs, batch_ys = mnist.train.next_batch(batch_size)
-
-        #print(batch_xs)
-        # Run a training step asynchronously.
-        # See <a href="./../api_docs/python/tf/train/SyncReplicasOptimizer"><code>tf.train.SyncReplicasOptimizer</code></a> for additional details on how to
-        # perform *synchronous* training.
-        # mon_sess.run handles AbortedError in case of preempted PS.
-
-        start = timer()
-
-        _, global_step_value, loss_value = mon_sess.run([train_op, global_step, loss],feed_dict={X: batch_xs, Y: batch_ys})
-
-        start2 = timer()
-
-        end = start2 - start
-
-        i= i + 1
-
-        Average_Computation_Time = Average_Computation_Time + end
-
-        #print("End ------- : ", end)
-
-        step = step + 1
-
-        if step % 100 == 0:
-          print(" Finish Step %d, Global Step %d, (Ave-Time: %.5f),  (Loss: %.2f)" % (step, global_step_value, end, loss_value))
-
-      except tf.errors.OutOfRangeError:
-        print('training finished, number of epochs reached')
-
-    Average_Computation_Time = Average_Computation_Time / i
-    print("(Average Computation Time: %.5f),  (Counter: %d)" % (Average_Computation_Time, i))
+      #if (step % 100 == 0):
+      stepsum = stepsum + 1
+      with open("timeperiteration.txt",'a') as out:
+        out.write("\n %5.4f" % oncetime)
+        
+      #img = (total_images/total_time)
+      cost, acc = mon_sess.run([loss,accuracy], feed_dict={X: mnist.validation.images, Y: mnist.validation.labels})
+      print("(stepsum = ", stepsum,"/60000", " cost= ", cost, "accuracy= ", acc, " Time = ", oncetime)
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
