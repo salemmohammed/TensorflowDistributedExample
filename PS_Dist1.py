@@ -43,7 +43,7 @@ def main(_):
 
   is_chief = (FLAGS.task_index == 0)
   num_workers = len(worker_hosts)
-
+  print("num_workers" , num_workers)
   if FLAGS.job_name == "ps":
     print('--- Parameter Server Ready ---')
     server.join()
@@ -52,10 +52,13 @@ def main(_):
 
     mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
     # Assigns ops to the local worker by default.
+    
+    #with tf.device(tf.train.replica_device_setter(worker_device="/job:worker/task:%d" % FLAGS.task_index, cluster = cluster)):
 
-    with tf.device(tf.train.replica_device_setter(worker_device="/job:worker/task:%d" % FLAGS.task_index, cluster = cluster)):
+    with tf.device(tf.train.replica_device_setter(worker_device="/job:worker/task:%d" % (FLAGS.task_index),cluster=cluster)):
 
-      global_step = tf.train.get_or_create_global_step()
+      global_step = tf.contrib.framework.get_or_create_global_step()
+
 
       with tf.name_scope('input'):
         X = tf.placeholder(dtype=tf.float32,shape=[None, 784])
@@ -63,21 +66,35 @@ def main(_):
         keep_prob = tf.placeholder(tf.float32, name = 'keep_prob')
 
       with tf.name_scope("weights"):
-        W1 = tf.Variable(tf.random_normal([784, 256]))
-        W2 = tf.Variable(tf.random_normal([256,64]))
-        W3 = tf.Variable(tf.random_normal([64, 10]))
+        W1 = tf.Variable(tf.random_normal([784, 512]),dtype=tf.float32)
+        W2 = tf.Variable(tf.random_normal([512,256]),dtype=tf.float32)
+        W3 = tf.Variable(tf.random_normal([256,128]),dtype=tf.float32)
+        W4 = tf.Variable(tf.random_normal([128, 64]),dtype=tf.float32)
+        W5 = tf.Variable(tf.random_normal([64, 10]),dtype=tf.float32)
+        s1 = tf.size(W1)
+        print("the size ----------------------------------- ", s1) 
       with tf.name_scope("biases"):
-        b1 = tf.Variable(tf.zeros([256]))
-        b2 = tf.Variable(tf.zeros([64]))
-        b3 = tf.Variable(tf.zeros([10]))
+        b1 = tf.Variable(tf.zeros([512]),dtype=tf.float32)
+        b2 = tf.Variable(tf.zeros([256]),dtype=tf.float32)
+        b3 = tf.Variable(tf.zeros([128]),dtype=tf.float32)
+        b4 = tf.Variable(tf.zeros([64]),dtype=tf.float32)
+        b5 = tf.Variable(tf.zeros([10]),dtype=tf.float32)
 
       with tf.name_scope("softmax"):
         z2 = tf.add(tf.matmul(X,W1),b1)
         a2 = tf.nn.sigmoid(z2)
+
         z3 = tf.add(tf.matmul(a2,W2),b2)
         a3 = tf.nn.sigmoid(z3)
+
         z4 = tf.add(tf.matmul(a3,W3),b3)
-        out  = tf.nn.softmax(z4)
+        a4 = tf.nn.sigmoid(z4)
+
+        z5 = tf.add(tf.matmul(a4,W4),b4)
+        a5 = tf.nn.sigmoid(z5)
+
+        z6 = tf.add(tf.matmul(a5,W5),b5)
+        out  = tf.nn.softmax(z6)
 
       # Build model...
       with tf.name_scope('cross_entropy'):
@@ -90,11 +107,11 @@ def main(_):
 
       with tf.name_scope("train"):
         grad = tf.train.GradientDescentOptimizer(learning_rate=0.0014)
-        begin = timer()
-        syn = tf.train.SyncReplicasOptimizer(grad, replicas_to_aggregate=num_workers, total_num_replicas=num_workers)
-        begin_again = timer()
-        elapse = begin_again - begin
-        print("elapse", elapse)
+        #begin = timer()
+        syn = tf.train.SyncReplicasOptimizer(grad, replicas_to_aggregate=num_workers, total_num_replicas=num_workers, use_locking=True)
+        #begin_again = timer()
+        #elapse = begin_again - begin
+        #print("elapse", elapse)
         train_op = syn.minimize(loss, global_step=global_step)
         with tf.name_scope("accuracy"):
             correct_prediction = tf.equal(tf.argmax(out,1),tf.argmax(Y,1))
@@ -104,7 +121,7 @@ def main(_):
   tf.local_variables_initializer()
   tf.global_variables_initializer()
 
-  sync_replicas_hook = syn.make_session_run_hook(is_chief)
+  sync_replicas_hook = syn.make_session_run_hook(is_chief,num_tokens=0)
   stop_hook= tf.train.StopAtStepHook(last_step=1000000)
   hooks = [sync_replicas_hook,stop_hook]
 
@@ -119,6 +136,7 @@ def main(_):
   with tf.train.MonitoredTrainingSession( master=server.target, is_chief=is_chief, hooks=hooks) as mon_sess:
     step = 0
     i = 0
+    #arr = []
     End = 0
     total_images = 0
     total_time = 0
@@ -139,12 +157,15 @@ def main(_):
 
       #if (step % 100 == 0):
       stepsum = stepsum + 1
-      with open("timeperiteration.txt",'a') as out:
-        out.write("\n %5.4f" % oncetime)
-        
-      #img = (total_images/total_time)
+
+      with open('itrTime','a') as out:
+        out.write('\n%.10f' % oncetime)
+
+      img = (total_images/total_time)
       cost, acc = mon_sess.run([loss,accuracy], feed_dict={X: mnist.validation.images, Y: mnist.validation.labels})
-      print("(stepsum = ", stepsum,"/60000", " cost= ", cost, "accuracy= ", acc, " Time = ", oncetime)
+      print("(stepsum = ", stepsum,"/60000", " cost= ", cost, "accuracy= ", acc, " Time = ", oncetime, " global_step = ", global_step_value)
+      with open('Throughput','a') as out:
+        out.write('\n%d' % img)      
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
